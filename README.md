@@ -6,9 +6,11 @@ Scrapes all of your LinkedIn saved posts (including full-resolution images and v
 
 ![Grid view](screenshots/viewer-grid.png)
 
-![Dark mode](screenshots/viewer-dark.png)
+![Posts with media](screenshots/viewer-posts.png)
 
-![Post detail](screenshots/viewer-detail.png)
+![Scheduler & Sync](screenshots/viewer-scheduler.png)
+
+![Post Statistics](screenshots/viewer-stats.png)
 
 ## Features
 
