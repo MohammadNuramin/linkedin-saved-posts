@@ -1,0 +1,22 @@
+# Credentials — NEVER commit
+.env
+.env.*
+!.env.example
+
+# Scraped personal data
+output/
+
+# Dependencies
+node_modules/
+viewer/node_modules/
+
+# Build output
+viewer/dist/
+
+# Debug artifacts
+*.png
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db

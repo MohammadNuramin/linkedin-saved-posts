@@ -1,0 +1,28 @@
+{
+  "name": "linkedin-saved-posts-scraper",
+  "version": "1.0.0",
+  "description": "Extract LinkedIn saved posts with multimedia content",
+  "main": "scraper.js",
+  "type": "module",
+  "scripts": {
+    "scrape": "node scraper.js",
+    "sync": "node scraper-incremental.js",
+    "sync:visible": "cross-env HEADLESS=false node scraper-incremental.js",
+    "scheduler:setup": "node setup-scheduler.js",
+    "scheduler:remove": "node setup-scheduler.js --remove",
+    "server": "node server.js",
+    "viewer": "concurrently \"node server.js\" \"cd viewer && npm run dev\"",
+    "upgrade": "node upgrade-quality.js",
+    "upgrade:videos": "node upgrade-videos.js",
+    "install-browsers": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "concurrently": "^9.2.1",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
+  }
+}
