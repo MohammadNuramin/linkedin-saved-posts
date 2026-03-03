@@ -86,12 +86,14 @@ cd viewer && npm install && npm run dev
 
 ## Configuration
 
-Edit the `CHROME_USER_DATA` and `CHROME_PROFILE` constants at the top of each scraper script to match your Chrome installation:
+Optionally set these in your `.env` to point to your Chrome profile:
 
-```js
-const CHROME_USER_DATA = 'C:/Users/YourName/AppData/Local/Google/Chrome/User Data';
-const CHROME_PROFILE   = 'Default'; // or 'Profile 1', 'Profile 2', etc.
+```env
+CHROME_USER_DATA=C:/Users/YourName/AppData/Local/Google/Chrome/User Data
+CHROME_PROFILE=Profile 2
 ```
+
+If omitted, defaults to `%LOCALAPPDATA%/Google/Chrome/User Data` and `Default` profile.
 
 Credentials in `.env` are optional — if Chrome is already logged into LinkedIn, the scrapers will use that session directly.
 

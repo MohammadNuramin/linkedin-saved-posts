@@ -20,8 +20,8 @@ import { execSync } from 'child_process';
 import 'dotenv/config';
 
 // ─── Config ────────────────────────────────────────────────────────────────
-const CHROME_USER_DATA = 'C:/Users/Aveno/AppData/Local/Google/Chrome/User Data';
-const CHROME_PROFILE   = 'Profile 2'; // change to your Chrome profile name
+const CHROME_USER_DATA = process.env.CHROME_USER_DATA || `${process.env.LOCALAPPDATA}/Google/Chrome/User Data`;
+const CHROME_PROFILE   = process.env.CHROME_PROFILE || 'Default';
 const EMAIL    = process.env.LINKEDIN_EMAIL;
 const PASSWORD = process.env.LINKEDIN_PASSWORD;
 const OUTPUT_DIR  = './output';

@@ -22,8 +22,8 @@ import { execSync, spawnSync } from 'child_process';
 import 'dotenv/config';
 
 // ─── Config ────────────────────────────────────────────────────────────────
-const CHROME_USER_DATA = 'C:/Users/Aveno/AppData/Local/Google/Chrome/User Data';
-const CHROME_PROFILE   = 'Profile 2';
+const CHROME_USER_DATA = process.env.CHROME_USER_DATA || `${process.env.LOCALAPPDATA}/Google/Chrome/User Data`;
+const CHROME_PROFILE   = process.env.CHROME_PROFILE || 'Default';
 const OUTPUT_JSON = './output/saved_posts.json';
 const MEDIA_DIR   = './output/media';
 
