@@ -2,6 +2,14 @@
 
 Scrapes all of your LinkedIn saved posts (including full-resolution images and videos) and serves them through a polished local browser viewer with search, filters, and dark mode.
 
+## Screenshots
+
+![Grid view](screenshots/viewer-grid.png)
+
+![Dark mode](screenshots/viewer-dark.png)
+
+![Post detail](screenshots/viewer-detail.png)
+
 ## Features
 
 - **Full scrape** — downloads all saved posts with text, images, and videos

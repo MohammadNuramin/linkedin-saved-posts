@@ -14,8 +14,8 @@ viewer/node_modules/
 viewer/dist/
 
 # Debug artifacts
-*.png
 *.tmp
+debug_page.png
 
 # OS
 .DS_Store
