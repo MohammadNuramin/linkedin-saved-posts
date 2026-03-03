@@ -8,9 +8,12 @@ Scrapes all of your LinkedIn saved posts (including full-resolution images and v
 
 ![Posts with media](screenshots/viewer-posts.png)
 
-![Scheduler & Sync](screenshots/viewer-scheduler.png)
-
-![Post Statistics](screenshots/viewer-stats.png)
+<table>
+  <tr>
+    <td><img src="screenshots/viewer-scheduler.png" alt="Scheduler & Sync"/></td>
+    <td><img src="screenshots/viewer-stats.png" alt="Post Statistics"/></td>
+  </tr>
+</table>
 
 ## Features
 
