@@ -26,12 +26,12 @@ export default function App() {
 
   const handleDeletePost = useCallback((index: number) => {
     setPosts(prev => prev.filter(p => p.index !== index));
-    fetch(`http://localhost:3001/api/posts/${index}`, { method: 'DELETE' }).catch(() => {});
+    fetch(`/api/posts/${index}`, { method: 'DELETE' }).catch(() => {});
   }, [setPosts]);
 
   const handleDeleteAuthor = useCallback((author: string) => {
     setPosts(prev => prev.filter(p => p.author !== author));
-    fetch('http://localhost:3001/api/posts/author', {
+    fetch('/api/posts/author', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ author }),

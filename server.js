@@ -1,7 +1,7 @@
 /**
  * API server for the LinkedIn Saved Posts viewer.
  * Exposes scheduler control and sync status to the frontend UI.
- * Run: node server.js  (starts on port 3001)
+ * Run: node server.js  (starts on port 4781)
  */
 
 import express from 'express';
@@ -151,7 +151,7 @@ app.delete('/api/posts/:index', (req, res) => {
 // ─── Health ───────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-const PORT = process.env.PORT ?? 3001;
+const PORT = process.env.PORT ?? 4781;
 app.listen(PORT, () => {
   console.log(`[server] API running on http://localhost:${PORT}`);
 });

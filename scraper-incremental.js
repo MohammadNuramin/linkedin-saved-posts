@@ -37,6 +37,26 @@ const HEADLESS = process.env.HEADLESS !== 'false';
 const delay = (min, max) =>
   new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
 
+/** Navigate with retry + exponential backoff (handles ERR_CONNECTION_RESET) */
+async function gotoWithRetry(page, url, opts = {}, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await page.goto(url, opts);
+      return;
+    } catch (e) {
+      const isRetryable = e.message.includes('ERR_CONNECTION_RESET') ||
+        e.message.includes('ERR_CONNECTION_REFUSED') ||
+        e.message.includes('ERR_CONNECTION_TIMED_OUT') ||
+        e.message.includes('ERR_NETWORK_CHANGED') ||
+        e.message.includes('Timeout');
+      if (!isRetryable || attempt === maxRetries) throw e;
+      const wait = attempt * 15_000 + Math.random() * 5_000;
+      console.warn(`[sync] Navigation failed (${e.message.split('\n')[0]}). Retry ${attempt}/${maxRetries} in ${Math.round(wait / 1000)}s...`);
+      await delay(wait, wait + 1000);
+    }
+  }
+}
+
 // ─── Sync log ──────────────────────────────────────────────────────────────
 function loadLog() {
   try { return JSON.parse(readFileSync(SYNC_LOG, 'utf8')); } catch { return []; }
@@ -180,7 +200,7 @@ async function loginIfNeeded(page) {
   if (EMAIL && PASSWORD) {
     try {
       if (!page.url().includes('/login') && !page.url().includes('/signin')) {
-        await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        await gotoWithRetry(page, 'https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 30_000 });
         await delay(1000, 1500);
       }
       await page.fill('input[name="session_key"], input#username', EMAIL);
@@ -193,7 +213,7 @@ async function loginIfNeeded(page) {
         console.error('[error] 2FA required — aborting.');
         return false;
       }
-      await page.goto('https://www.linkedin.com/my-items/saved-posts/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await gotoWithRetry(page, 'https://www.linkedin.com/my-items/saved-posts/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await delay(2000, 3000);
       return true;
     } catch (e) {
@@ -382,7 +402,7 @@ async function run() {
   let newPosts = [];
 
   try {
-    await page.goto('https://www.linkedin.com/my-items/saved-posts/', {
+    await gotoWithRetry(page, 'https://www.linkedin.com/my-items/saved-posts/', {
       waitUntil: 'domcontentloaded', timeout: 60_000,
     });
     await delay(2000, 3000);
@@ -459,7 +479,9 @@ async function run() {
       // Download media for new posts
       console.log('[sync] Downloading media...');
       for (const post of newPosts) {
-        const prefix = `post_${String(post.index).padStart(4, '0')}`;
+        // Use activity URN as stable prefix — index is mutable after re-indexing
+        const actId = post.url?.match(/activity[:%3A]+(\d+)/)?.[1];
+        const prefix = actId ? `act_${actId}` : `post_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         for (let i = 0; i < post.images.length; i++) {
           const f = await downloadFile(post.images[i], MEDIA_DIR, `${prefix}_img_${i}`);
           if (f) post.mediaFiles.push({ type: 'image', file: f, originalUrl: post.images[i] });
