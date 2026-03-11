@@ -1,12 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Calendar, CheckCircle2, XCircle, AlertCircle, Play, Trash2, Clock } from "lucide-react";
+import { RefreshCw, Calendar, CheckCircle2, XCircle, AlertCircle, Play, Trash2, Clock, Brain } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface SchedulerStatus {
@@ -30,6 +28,18 @@ interface SyncLogEntry {
 interface SyncStatus {
   running: boolean;
   output: string;
+}
+
+interface EmbeddingModel {
+  id: string;
+  label: string;
+  vram: string;
+}
+
+interface SettingsData {
+  embeddingModel: string;
+  availableModels: EmbeddingModel[];
+  vllmUrl: string;
 }
 
 // ─── API helpers ────────────────────────────────────────────────────────────
@@ -109,16 +119,24 @@ export function SchedulerSettings({ open, onClose }: Props) {
   // Check if API server is reachable
   const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
 
+  // Embedding model settings
+  const [embSettings, setEmbSettings] = useState<SettingsData | null>(null);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [savingModel, setSavingModel] = useState(false);
+
   const fetchAll = useCallback(async () => {
     try {
-      const [sched, entries] = await Promise.all([
+      const [sched, entries, settings] = await Promise.all([
         apiFetch<SchedulerStatus>("/api/scheduler"),
         apiFetch<SyncLogEntry[]>("/api/sync-log"),
+        apiFetch<SettingsData>("/api/settings"),
       ]);
       setScheduler(sched);
       setLog(entries);
       setSelectedHour(sched.hour);
       setSelectedMinute(sched.minute);
+      setEmbSettings(settings);
+      setSelectedModel(settings.embeddingModel);
       setApiAvailable(true);
       setApiError(null);
     } catch (e) {
@@ -185,9 +203,26 @@ export function SchedulerSettings({ open, onClose }: Props) {
     }
   };
 
+  const handleModelChange = async (modelId: string) => {
+    setSelectedModel(modelId);
+    setSavingModel(true);
+    setApiError(null);
+    try {
+      await apiFetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ embeddingModel: modelId }),
+      });
+    } catch (e) {
+      setApiError(e instanceof Error ? e.message : "Failed to save model");
+    } finally {
+      setSavingModel(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden p-0">
         <DialogHeader className="px-6 pt-5 pb-3">
           <div className="flex items-center gap-2">
             <Calendar className="h-5 w-5 text-primary" />
@@ -195,7 +230,7 @@ export function SchedulerSettings({ open, onClose }: Props) {
           </div>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 px-6 pb-6">
+        <div className="overflow-y-auto px-6 pb-6">
           <div className="space-y-5">
 
             {/* API unavailable warning */}
@@ -307,25 +342,65 @@ export function SchedulerSettings({ open, onClose }: Props) {
             <Separator />
 
             {/* Manual sync */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">Manual sync</p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleSyncNow}
-                  disabled={syncStatus.running || apiAvailable !== true}
-                >
-                  <Play className={cn("h-3.5 w-3.5 mr-1", syncStatus.running && "animate-pulse")} />
-                  {syncStatus.running ? "Syncing…" : "Sync now"}
-                </Button>
-              </div>
+            <div className="space-y-3">
+              <p className="text-sm font-medium">Manual sync</p>
+              <Button
+                variant="outline"
+                onClick={handleSyncNow}
+                disabled={syncStatus.running || apiAvailable !== true}
+                className="w-full border-2 border-[#0A66C2] text-[#0A66C2] hover:bg-[#0A66C2] hover:text-white [&>svg]:text-[#0A66C2] hover:[&>svg]:text-white"
+              >
+                {syncStatus.running ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+                <span>{syncStatus.running ? "Syncing + embedding…" : "Sync now"}</span>
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Starts Docker vLLM, syncs new posts, generates embeddings, then stops Docker.
+              </p>
               {syncStatus.running && syncStatus.output && (
                 <pre className="rounded-md bg-muted p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap max-h-32">
                   {syncStatus.output.split("\r").pop()}
                 </pre>
               )}
             </div>
+
+            <Separator />
+
+            {/* Embedding model */}
+            {embSettings && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Brain className="h-4 w-4 text-purple-500" />
+                  <p className="text-sm font-medium">Embedding model</p>
+                  {savingModel && <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" />}
+                </div>
+                <Select
+                  value={selectedModel}
+                  onValueChange={handleModelChange}
+                  disabled={apiAvailable !== true || savingModel}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {embSettings.availableModels.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        <div className="flex items-center gap-2">
+                          <span>{m.label}</span>
+                          <span className="text-xs text-muted-foreground">({m.vram})</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  vLLM runs locally via Docker during sync. After changing model, run <code className="font-mono">npm run embed-only</code> to regenerate embeddings.
+                </p>
+              </div>
+            )}
 
             <Separator />
 
@@ -336,7 +411,7 @@ export function SchedulerSettings({ open, onClose }: Props) {
             </div>
 
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );

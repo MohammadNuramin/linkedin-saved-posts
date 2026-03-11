@@ -15,9 +15,10 @@ export const initialFilterState: FilterState = {
   author: "",
   hashtag: "",
   mediaType: "all",
-  sortOrder: "original",
+  sortOrder: "newest",
   darkMode: getInitialDarkMode(),
   selectedPost: null,
+  semanticResults: null,
 };
 
 export function filterReducer(
@@ -42,6 +43,8 @@ export function filterReducer(
     }
     case "SELECT_POST":
       return { ...state, selectedPost: action.payload };
+    case "SET_SEMANTIC_RESULTS":
+      return { ...state, semanticResults: action.payload };
     case "RESET_FILTERS":
       return {
         ...state,
@@ -50,6 +53,7 @@ export function filterReducer(
         hashtag: "",
         mediaType: "all",
         sortOrder: "original",
+        semanticResults: null,
       };
     default:
       return state;

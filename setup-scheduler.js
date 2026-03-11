@@ -15,7 +15,7 @@ import os from 'os';
 
 const TASK_NAME = 'LinkedIn Saved Posts Daily Sync';
 const SCRIPT_DIR = resolve(import.meta.dirname ?? process.cwd());
-const SCRIPT_PATH = join(SCRIPT_DIR, 'scraper-incremental.js');
+const SCRIPT_PATH = join(SCRIPT_DIR, 'sync-and-embed.js');
 const NODE_PATH = execSync('where node', { encoding: 'utf8' }).trim().split('\n')[0].trim();
 
 // ─── Remove task ──────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ $workingDir = '${SCRIPT_DIR}'
 # Remove existing task if present
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
-# Action: run node scraper-incremental.js
+# Action: run node sync-and-embed.js (sync + Docker vLLM + embed)
 $action = New-ScheduledTaskAction \`
   -Execute   $nodePath \`
   -Argument  """$scriptPath""" \`
@@ -104,7 +104,7 @@ try {
 │                                                         │
 │  View in:  Task Scheduler → Task Scheduler Library      │
 │  Remove:   node setup-scheduler.js --remove             │
-│  Test now: node scraper-incremental.js                  │
+│  Test now: node sync-and-embed.js                       │
 └─────────────────────────────────────────────────────────┘
 `);
 } catch (e) {

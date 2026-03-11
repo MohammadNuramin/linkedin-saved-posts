@@ -4,6 +4,7 @@
  * Run: node server.js  (starts on port 4781)
  */
 
+import 'dotenv/config';
 import express from 'express';
 import { execSync, spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -103,11 +104,19 @@ app.post('/api/sync', (_req, res) => {
     return res.status(409).json({ error: 'Sync already running' });
   }
   syncLog = [];
-  syncProc = spawn('node', ['scraper-incremental.js'], {
+  // Use the orchestrator: sync → Docker vLLM → embed → stop Docker
+  syncProc = spawn('node', ['sync-and-embed.js', '--visible'], {
     cwd: __dirname,
-    env: { ...process.env, HEADLESS: 'false' },
+    env: { ...process.env },
   });
-  const onData = (d) => syncLog.push(d.toString());
+  const onData = (d) => {
+    syncLog.push(d.toString());
+    // Clear embedding caches when embeddings are regenerated
+    if (d.toString().includes('Saved') && d.toString().includes('embeddings')) {
+      textEmbCache = null;
+      imgEmbCache = null;
+    }
+  };
   syncProc.stdout.on('data', onData);
   syncProc.stderr.on('data', onData);
   syncProc.on('close', () => { syncProc = null; });
@@ -146,6 +155,134 @@ app.delete('/api/posts/:index', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─── Settings ─────────────────────────────────────────────────────────
+const SETTINGS_JSON = join(__dirname, 'output', 'settings.json');
+const AVAILABLE_MODELS = [
+  { id: 'Qwen/Qwen3-VL-Embedding-2B', label: 'Qwen3-VL-Embedding 2B', vram: '~5GB', textBatch: 32, imgConcurrency: 16 },
+  { id: 'Qwen/Qwen3-VL-Embedding-8B', label: 'Qwen3-VL-Embedding 8B', vram: '~18GB', textBatch: 16, imgConcurrency: 6 },
+];
+const DEFAULT_MODEL = 'Qwen/Qwen3-VL-Embedding-2B';
+
+function loadSettings() {
+  try { return JSON.parse(readFileSync(SETTINGS_JSON, 'utf8')); }
+  catch { return {}; }
+}
+
+function saveSettings(s) {
+  writeFileSync(SETTINGS_JSON, JSON.stringify(s, null, 2), 'utf8');
+}
+
+app.get('/api/settings', (_req, res) => {
+  const s = loadSettings();
+  res.json({
+    embeddingModel: s.embeddingModel || DEFAULT_MODEL,
+    availableModels: AVAILABLE_MODELS,
+    vllmUrl: (process.env.VLLM_URL || 'http://localhost:8691').replace(/\/$/, ''),
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  const s = loadSettings();
+  if (req.body.embeddingModel) {
+    const valid = AVAILABLE_MODELS.find(m => m.id === req.body.embeddingModel);
+    if (!valid) return res.status(400).json({ error: 'Invalid model' });
+    s.embeddingModel = req.body.embeddingModel;
+    // Clear embedding caches so they reload on next search
+    textEmbCache = null;
+    imgEmbCache = null;
+  }
+  saveSettings(s);
+  res.json({ success: true, settings: s });
+});
+
+// ─── Semantic search (multimodal embeddings) ────────────────────────────
+const TEXT_EMB_JSON = join(__dirname, 'output', 'embeddings.json');
+const IMG_EMB_JSON = join(__dirname, 'output', 'embeddings-img.json');
+const VLLM_URL = (process.env.VLLM_URL || 'http://localhost:8691').replace(/\/$/, '');
+
+function getVllmModel() {
+  const s = loadSettings();
+  return s.embeddingModel || DEFAULT_MODEL;
+}
+
+let textEmbCache = null;
+let imgEmbCache = null;
+
+function loadTextEmb() {
+  if (textEmbCache) return textEmbCache;
+  try { textEmbCache = JSON.parse(readFileSync(TEXT_EMB_JSON, 'utf8')); return textEmbCache; }
+  catch { return null; }
+}
+
+function loadImgEmb() {
+  if (imgEmbCache) return imgEmbCache;
+  try { imgEmbCache = JSON.parse(readFileSync(IMG_EMB_JSON, 'utf8')); return imgEmbCache; }
+  catch { return null; }
+}
+
+function cosine(a, b) {
+  if (!a || !b || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
+}
+
+app.get('/api/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'query required' });
+
+  const textEmb = loadTextEmb();
+  const imgEmb = loadImgEmb();
+  if (!textEmb && !imgEmb) return res.status(500).json({ error: 'No embeddings. Run: node generate-embeddings.js' });
+
+  try {
+    const model = getVllmModel();
+    const vRes = await fetch(`${VLLM_URL}/v1/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input: q }),
+    });
+    if (!vRes.ok) throw new Error(`vLLM API ${vRes.status}: ${await vRes.text()}`);
+    const queryVec = (await vRes.json()).data[0].embedding;
+
+    // Score all posts — best of text score and image score
+    const posts = JSON.parse(readFileSync(POSTS_JSON, 'utf8'));
+    const scored = posts
+      .map(p => {
+        const key = p.url || `index_${p.index}`;
+        const tVec = textEmb?.[key];
+        const iVec = imgEmb?.[key];
+        if (!tVec && !iVec) return null;
+        const tScore = tVec ? cosine(queryVec, tVec) : 0;
+        const iScore = iVec ? cosine(queryVec, iVec) : 0;
+        return { index: p.index, score: Math.max(tScore, iScore) };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 50);
+
+    res.json({ results: scored.map(s => s.index), scores: Object.fromEntries(scored.map(s => [s.index, s.score])) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/search/status', (_req, res) => {
+  const textEmb = loadTextEmb();
+  const imgEmb = loadImgEmb();
+  const tCount = textEmb ? Object.keys(textEmb).length : 0;
+  const iCount = imgEmb ? Object.keys(imgEmb).length : 0;
+  res.json({
+    available: tCount > 0 || iCount > 0,
+    postCount: Math.max(tCount, iCount),
+    model: getVllmModel(),
+  });
 });
 
 // ─── Health ───────────────────────────────────────────────────────────────

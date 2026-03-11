@@ -6,12 +6,15 @@
   "type": "module",
   "scripts": {
     "scrape": "node scraper.js",
-    "sync": "node scraper-incremental.js",
-    "sync:visible": "cross-env HEADLESS=false node scraper-incremental.js",
+    "sync": "node sync-and-embed.js",
+    "sync:visible": "node sync-and-embed.js --visible",
+    "sync:scrape-only": "node scraper-incremental.js",
+    "embed-only": "node sync-and-embed.js --embed-only",
     "scheduler:setup": "node setup-scheduler.js",
     "scheduler:remove": "node setup-scheduler.js --remove",
     "server": "node server.js",
     "viewer": "concurrently \"node server.js\" \"cd viewer && npm run dev\"",
+    "embeddings": "node generate-embeddings.js",
     "upgrade": "node upgrade-quality.js",
     "upgrade:videos": "node upgrade-videos.js",
     "install-browsers": "npx playwright install chromium"

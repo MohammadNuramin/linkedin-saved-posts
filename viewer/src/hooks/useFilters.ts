@@ -26,7 +26,14 @@ export function useFilters(posts: Post[], state: FilterState): UseFiltersResult 
   const filteredPosts = useMemo(() => {
     let result = [...posts];
 
-    if (state.search.trim()) {
+    // Semantic search overrides text search when active
+    if (state.semanticResults) {
+      const indexSet = new Set(state.semanticResults);
+      const indexOrder = new Map(state.semanticResults.map((idx, i) => [idx, i]));
+      result = result
+        .filter(p => indexSet.has(p.index))
+        .sort((a, b) => (indexOrder.get(a.index) ?? 999) - (indexOrder.get(b.index) ?? 999));
+    } else if (state.search.trim()) {
       const q = state.search.toLowerCase();
       result = result.filter(
         (p) =>
@@ -62,7 +69,7 @@ export function useFilters(posts: Post[], state: FilterState): UseFiltersResult 
     }
 
     return result;
-  }, [posts, state.search, state.author, state.hashtag, state.mediaType, state.sortOrder]);
+  }, [posts, state.search, state.author, state.hashtag, state.mediaType, state.sortOrder, state.semanticResults]);
 
   return { filteredPosts, allAuthors, allHashtags };
 }

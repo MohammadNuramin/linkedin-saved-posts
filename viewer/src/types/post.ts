@@ -28,6 +28,7 @@ export interface FilterState {
   sortOrder: SortOrder;
   darkMode: boolean;
   selectedPost: Post | null;
+  semanticResults: number[] | null; // post indices ordered by relevance
 }
 
 export type FilterAction =
@@ -38,4 +39,5 @@ export type FilterAction =
   | { type: "SET_SORT"; payload: SortOrder }
   | { type: "TOGGLE_DARK_MODE" }
   | { type: "SELECT_POST"; payload: Post | null }
+  | { type: "SET_SEMANTIC_RESULTS"; payload: number[] | null }
   | { type: "RESET_FILTERS" };

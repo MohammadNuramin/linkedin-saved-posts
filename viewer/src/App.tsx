@@ -21,8 +21,28 @@ export default function App() {
   const [state, dispatch] = useReducer(filterReducer, initialFilterState);
   const [showStats, setShowStats] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
+  const [semanticLoading, setSemanticLoading] = useState(false);
   const { posts, setPosts, loading, error } = usePosts();
   const { filteredPosts, allAuthors, allHashtags } = useFilters(posts, state);
+
+  const handleSemanticSearch = useCallback(async (query: string) => {
+    setSemanticLoading(true);
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error('Search failed');
+      const data = await res.json();
+      dispatch({ type: "SET_SEMANTIC_RESULTS", payload: data.results });
+    } catch {
+      // Fall back to normal text search
+      dispatch({ type: "SET_SEMANTIC_RESULTS", payload: null });
+    } finally {
+      setSemanticLoading(false);
+    }
+  }, []);
+
+  const handleClearSemantic = useCallback(() => {
+    dispatch({ type: "SET_SEMANTIC_RESULTS", payload: null });
+  }, []);
 
   const handleDeletePost = useCallback((index: number) => {
     setPosts(prev => prev.filter(p => p.index !== index));
@@ -46,7 +66,7 @@ export default function App() {
   const d = useCallback((action: FilterAction) => dispatch(action), []);
 
   const hasActiveFilters =
-    state.search || state.author || state.hashtag || state.mediaType !== "all";
+    state.search || state.author || state.hashtag || state.mediaType !== "all" || state.semanticResults;
 
   if (loading) {
     return (
@@ -84,6 +104,10 @@ export default function App() {
             <SearchBar
               value={state.search}
               onChange={(v) => d({ type: "SET_SEARCH", payload: v })}
+              onSemanticSearch={handleSemanticSearch}
+              onClearSemantic={handleClearSemantic}
+              semanticActive={state.semanticResults !== null}
+              semanticLoading={semanticLoading}
             />
             <AuthorSelect
               value={state.author}
