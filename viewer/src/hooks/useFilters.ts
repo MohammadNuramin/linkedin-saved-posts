@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Post, FilterState } from "@/types/post";
-import { parseTimestampAge } from "@/lib/parseTimestamp";
+import { getPostSortTime } from "@/lib/parseTimestamp";
 import { extractHashtags, getAllHashtags } from "@/lib/extractHashtags";
 
 interface UseFiltersResult {
@@ -25,6 +25,14 @@ export function useFilters(posts: Post[], state: FilterState): UseFiltersResult 
 
   const filteredPosts = useMemo(() => {
     let result = [...posts];
+    const compareByTime = (a: Post, b: Post, newestFirst: boolean) => {
+      const aTime = getPostSortTime(a);
+      const bTime = getPostSortTime(b);
+      if (aTime === null && bTime === null) return 0;
+      if (aTime === null) return 1;
+      if (bTime === null) return -1;
+      return newestFirst ? bTime - aTime : aTime - bTime;
+    };
 
     // Semantic search overrides text search when active
     if (state.semanticResults) {
@@ -59,13 +67,9 @@ export function useFilters(posts: Post[], state: FilterState): UseFiltersResult 
     }
 
     if (state.sortOrder === "newest") {
-      result.sort(
-        (a, b) => parseTimestampAge(a.timestamp) - parseTimestampAge(b.timestamp)
-      );
+      result.sort((a, b) => compareByTime(a, b, true));
     } else if (state.sortOrder === "oldest") {
-      result.sort(
-        (a, b) => parseTimestampAge(b.timestamp) - parseTimestampAge(a.timestamp)
-      );
+      result.sort((a, b) => compareByTime(a, b, false));
     }
 
     return result;

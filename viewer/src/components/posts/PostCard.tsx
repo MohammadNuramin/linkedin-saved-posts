@@ -7,7 +7,7 @@ import { PostText } from "./PostText";
 import { PostMedia } from "./PostMedia";
 import { PostActions } from "./PostActions";
 import { getInitials } from "@/lib/utils";
-import { isRepost, getRepostAuthor } from "@/lib/parseTimestamp";
+import { isRepost, getRepostAuthor, getDisplayTimestamp } from "@/lib/parseTimestamp";
 import type { Post } from "@/types/post";
 
 interface Props {
@@ -20,6 +20,7 @@ interface Props {
 
 export const PostCard = memo(function PostCard({ post, onSelect, onHashtagClick, onDelete, onDeleteAuthor }: Props) {
   const repost = isRepost(post.timestamp);
+  const displayTime = getDisplayTimestamp(post);
 
   return (
     <Card
@@ -35,12 +36,13 @@ export const PostCard = memo(function PostCard({ post, onSelect, onHashtagClick,
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm leading-tight truncate">{post.author}</p>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-              {repost ? (
+              {repost && (
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                  Repost · {getRepostAuthor(post.timestamp)}
+                  Repost - {getRepostAuthor(post.timestamp)}
                 </Badge>
-              ) : (
-                <span className="text-xs text-muted-foreground">{post.timestamp}</span>
+              )}
+              {displayTime && (
+                <span className="text-xs text-muted-foreground">{displayTime}</span>
               )}
             </div>
           </div>

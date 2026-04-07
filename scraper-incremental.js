@@ -18,6 +18,7 @@ import { URL } from 'url';
 import os from 'os';
 import { execSync } from 'child_process';
 import 'dotenv/config';
+import { enrichPostsWithPostedAt } from './post-time.js';
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const CHROME_USER_DATA = process.env.CHROME_USER_DATA || `${process.env.LOCALAPPDATA}/Google/Chrome/User Data`;
@@ -371,7 +372,8 @@ function writeMarkdown(post) {
   const mediaLines = post.mediaFiles.map(m =>
     m.type === 'image' ? `![image](../media/${m.file})` : `[video](../media/${m.file})`
   ).join('\n');
-  const md = `# ${title}\n\n**Author:** [${post.author || 'Unknown'}](${post.authorUrl || ''})\n**Date:** ${post.timestamp || 'Unknown'}\n**Post:** ${post.url || ''}\n\n---\n\n${post.text || '*No text content*'}\n\n${mediaLines}\n`.trimEnd() + '\n';
+  const postedLabel = post.postedAt || 'Unknown';
+  const md = `# ${title}\n\n**Author:** [${post.author || 'Unknown'}](${post.authorUrl || ''})\n**Posted:** ${postedLabel}\n**Saved View Label:** ${post.timestamp || 'Unknown'}\n**Post:** ${post.url || ''}\n\n---\n\n${post.text || '*No text content*'}\n\n${mediaLines}\n`.trimEnd() + '\n';
   writeFileSync(join(MD_DIR, filename), md, 'utf8');
 }
 
@@ -491,6 +493,15 @@ async function run() {
           if (f) post.mediaFiles.push({ type: 'video', file: f, originalUrl: post.videos[i] });
         }
       }
+
+      console.log('[sync] Resolving original publish times...');
+      await enrichPostsWithPostedAt(newPosts, {
+        concurrency: 8,
+        onProgress: ({ processed, total, updated }) => {
+          process.stdout.write(`\r  Posted times: ${processed}/${total} checked, ${updated} found`);
+        },
+      });
+      process.stdout.write('\n');
 
       // Re-index: new posts prepended, existing posts shifted
       const merged = [...newPosts, ...existingPosts].map((p, i) => ({ ...p, index: i + 1 }));

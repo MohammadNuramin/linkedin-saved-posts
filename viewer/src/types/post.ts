@@ -12,6 +12,7 @@ export interface Post {
   text: string | null;
   url: string | null;
   timestamp: string;
+  postedAt?: string | null;
   images: string[];
   videos: string[];
   mediaFiles: MediaFile[];

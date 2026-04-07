@@ -8,6 +8,7 @@ import { URL } from 'url';
 import os from 'os';
 import { execSync } from 'child_process';
 import 'dotenv/config';
+import { enrichPostsWithPostedAt } from './post-time.js';
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const CHROME_USER_DATA = process.env.CHROME_USER_DATA || `${process.env.LOCALAPPDATA}/Google/Chrome/User Data`;
@@ -345,11 +346,13 @@ function writeMarkdown(post) {
   const mediaLines = post.mediaFiles.map(m =>
     m.type === 'image' ? `![image](../media/${m.file})` : `[video](../media/${m.file})`
   ).join('\n');
+  const postedLabel = post.postedAt || 'Unknown';
 
   const md = `# ${title}
 
 **Author:** [${post.author || 'Unknown'}](${post.authorUrl || ''})
-**Date:** ${post.timestamp || 'Unknown'}
+**Posted:** ${postedLabel}
+**Saved View Label:** ${post.timestamp || 'Unknown'}
 **Post:** ${post.url || ''}
 
 ---
@@ -488,6 +491,14 @@ async function run() {
       }
       process.stdout.write(`\r  Media: ${post.index}/${posts.length}`);
     }
+
+    console.log('\n[*] Resolving original publish times...');
+    await enrichPostsWithPostedAt(posts, {
+      concurrency: 8,
+      onProgress: ({ processed, total, updated }) => {
+        process.stdout.write(`\r  Posted times: ${processed}/${total} checked, ${updated} found`);
+      },
+    });
 
     // Write markdown files
     console.log('\n[*] Writing markdown files...');

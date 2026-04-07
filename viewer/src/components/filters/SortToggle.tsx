@@ -14,8 +14,8 @@ export function SortToggle({ value, onChange }: Props) {
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="original">Original order</SelectItem>
-        <SelectItem value="newest">Newest first</SelectItem>
-        <SelectItem value="oldest">Oldest first</SelectItem>
+        <SelectItem value="newest">Newest posted first</SelectItem>
+        <SelectItem value="oldest">Oldest posted first</SelectItem>
       </SelectContent>
     </Select>
   );

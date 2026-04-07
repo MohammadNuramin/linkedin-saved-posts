@@ -10,6 +10,7 @@
     "sync:visible": "node sync-and-embed.js --visible",
     "sync:scrape-only": "node scraper-incremental.js",
     "embed-only": "node sync-and-embed.js --embed-only",
+    "dates:backfill": "node enrich-posted-times.js",
     "scheduler:setup": "node setup-scheduler.js",
     "scheduler:remove": "node setup-scheduler.js --remove",
     "server": "node server.js",

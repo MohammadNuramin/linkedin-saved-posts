@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { PostText } from "@/components/posts/PostText";
 import { getInitials, isDocumentImage } from "@/lib/utils";
-import { isRepost, getRepostAuthor } from "@/lib/parseTimestamp";
+import { isRepost, getRepostAuthor, getDisplayTimestamp } from "@/lib/parseTimestamp";
 import type { Post } from "@/types/post";
 
 interface Props {
@@ -22,6 +22,7 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
   if (!post) return null;
 
   const repost = isRepost(post.timestamp);
+  const displayTime = getDisplayTimestamp(post);
   const images = post.mediaFiles.filter((m) => m.type === "image");
   const videos = post.mediaFiles.filter((m) => m.type === "video");
   const isDoc = images.some((m) => isDocumentImage(m.originalUrl));
@@ -66,12 +67,13 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
                 )}
               </DialogTitle>
               <div className="mt-1 flex items-center gap-2 flex-wrap">
-                {repost ? (
+                {repost && (
                   <Badge variant="outline" className="text-xs">
-                    Repost · {getRepostAuthor(post.timestamp)}
+                    Repost - {getRepostAuthor(post.timestamp)}
                   </Badge>
-                ) : (
-                  <span className="text-xs text-muted-foreground">{post.timestamp}</span>
+                )}
+                {displayTime && (
+                  <span className="text-xs text-muted-foreground">{displayTime}</span>
                 )}
                 {images.length > 0 && (
                   <Badge variant="secondary" className="text-xs">
@@ -109,7 +111,7 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
             {isDoc && (
               <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 px-3 py-2 text-sm text-blue-800 dark:text-blue-300">
                 <FileText className="h-4 w-4 shrink-0" />
-                <span>Document post — {images.length} page{images.length !== 1 ? "s" : ""} captured.{post.url ? " Open on LinkedIn to view the full document." : ""}</span>
+                <span>Document post - {images.length} page{images.length !== 1 ? "s" : ""} captured.{post.url ? " Open on LinkedIn to view the full document." : ""}</span>
               </div>
             )}
 
@@ -127,7 +129,7 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
                       const img = e.currentTarget;
                       if (!img.dataset.fallback) {
                         img.dataset.fallback = "1";
-                        img.src = m.originalUrl; // CDN fallback
+                        img.src = m.originalUrl;
                       } else {
                         img.style.display = "none";
                       }
