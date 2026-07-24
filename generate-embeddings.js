@@ -1,211 +1,125 @@
 /**
- * Generate multimodal embeddings using Qwen3-VL-Embedding via vLLM.
- * Directly embeds text AND images into the same vector space.
- *
- * Run: node generate-embeddings.js
- * Output: output/embeddings.json     (text embeddings)
- *         output/embeddings-img.json  (image embeddings)
- *
- * Requires: VLLM_URL in .env (default: http://localhost:8691)
- *
- * Model is read from output/settings.json → embeddingModel
- * Override with: EMBEDDING_MODEL env var
+ * Incrementally generate text-only embeddings for LinkedIn posts with
+ * tencent/R3-embedding-0.6b.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
 import 'dotenv/config';
-
-// ─── Model config ────────────────────────────────────────────────────────
-const SETTINGS_PATH = './output/settings.json';
-const MODELS = {
-  'Qwen/Qwen3-VL-Embedding-2B':  { textBatch: 32, imgConcurrency: 16 },
-  'Qwen/Qwen3-VL-Embedding-8B':  { textBatch: 16, imgConcurrency: 6 },
-};
-const DEFAULT_MODEL = 'Qwen/Qwen3-VL-Embedding-2B';
-
-function loadSettings() {
-  try { return JSON.parse(readFileSync(SETTINGS_PATH, 'utf8')); }
-  catch { return {}; }
-}
-
-const settings = loadSettings();
-const MODEL = process.env.EMBEDDING_MODEL || settings.embeddingModel || DEFAULT_MODEL;
-const modelCfg = MODELS[MODEL] || MODELS[DEFAULT_MODEL];
-const TEXT_BATCH = modelCfg.textBatch;
-const IMG_CONCURRENCY = modelCfg.imgConcurrency;
-
-const VLLM_URL = (process.env.VLLM_URL || 'http://localhost:8691').replace(/\/$/, '');
+import { createHash } from 'crypto';
+import { readFileSync, writeFileSync } from 'fs';
+import {
+  EMBEDDING_MODEL,
+  EMBEDDING_URL,
+} from './search-runtime.js';
 
 const POSTS_JSON = './output/saved_posts.json';
-const TEXT_EMB_JSON = './output/embeddings.json';
-const IMG_EMB_JSON = './output/embeddings-img.json';
-const MEDIA_DIR = './output/media';
-
-function loadJSON(path) {
-  try { return JSON.parse(readFileSync(path, 'utf8')); }
-  catch { return {}; }
-}
-
-function saveJSON(path, data) {
-  writeFileSync(path, JSON.stringify(data), 'utf8');
-}
+const EMBEDDINGS_JSON = './output/r3-text-embeddings.json';
+const TEXT_BATCH = Number(process.env.R3_TEXT_BATCH || 32);
+const MAX_TEXT_CHARS = Number(process.env.R3_MAX_TEXT_CHARS || 12_000);
 
 function sanitizeText(text) {
   return (text || '')
     .replace(/[^\x20-\x7E\xA0-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
-function postKey(p) {
-  return p.url || `index_${p.index}`;
+function postKey(post) {
+  return post.url || `index_${post.index}`;
 }
 
-// ─── Text embedding (batched) ───────────────────────────────────────────
+function postText(post) {
+  return sanitizeText([post.author, post.text].filter(Boolean).join(' — ')).slice(0, MAX_TEXT_CHARS);
+}
+
+function fingerprint(text) {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+function loadIndex() {
+  try {
+    const value = JSON.parse(readFileSync(EMBEDDINGS_JSON, 'utf8'));
+    if (value.model !== EMBEDDING_MODEL || !value.embeddings || !value.fingerprints) {
+      return { model: EMBEDDING_MODEL, embeddings: {}, fingerprints: {} };
+    }
+    return value;
+  } catch {
+    return { model: EMBEDDING_MODEL, embeddings: {}, fingerprints: {} };
+  }
+}
+
+function saveIndex(index) {
+  writeFileSync(EMBEDDINGS_JSON, JSON.stringify({
+    model: EMBEDDING_MODEL,
+    dimensions: index.dimensions || null,
+    updatedAt: new Date().toISOString(),
+    embeddings: index.embeddings,
+    fingerprints: index.fingerprints,
+  }), 'utf8');
+}
+
 async function embedTextBatch(texts) {
-  const res = await fetch(`${VLLM_URL}/v1/embeddings`, {
+  const response = await fetch(`${EMBEDDING_URL}/v1/embeddings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, input: texts }),
+    body: JSON.stringify({ model: EMBEDDING_MODEL, input: texts }),
   });
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  return data.data.sort((a, b) => a.index - b.index).map(d => d.embedding);
-}
-
-// ─── Image embedding (one at a time via messages format) ────────────────
-async function embedImage(filePath) {
-  const ext = filePath.toLowerCase().split('.').pop();
-  const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
-  const mime = mimeMap[ext] || 'image/jpeg';
-  const b64 = readFileSync(filePath).toString('base64');
-
-  const res = await fetch(`${VLLM_URL}/v1/embeddings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } },
-        ],
-      }],
-    }),
-  });
-  if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const data = await res.json();
-  return data.data[0].embedding;
+  if (!response.ok) throw new Error(`Embedding API ${response.status}: ${await response.text()}`);
+  const body = await response.json();
+  return body.data.sort((a, b) => a.index - b.index).map(item => item.embedding);
 }
 
 async function run() {
-  console.log(`Model: ${MODEL}`);
-  console.log(`Config: textBatch=${TEXT_BATCH}, imgConcurrency=${IMG_CONCURRENCY}`);
+  const health = await fetch(`${EMBEDDING_URL}/health`);
+  if (!health.ok) throw new Error(`Embedding service is unhealthy: HTTP ${health.status}`);
 
-  // Test connectivity
-  try {
-    const h = await fetch(`${VLLM_URL}/health`);
-    if (!h.ok) throw new Error(`${h.status}`);
-    console.log(`vLLM server: ${VLLM_URL} ✓`);
-  } catch (e) {
-    console.error(`Cannot reach vLLM at ${VLLM_URL}: ${e.message}`);
-    process.exit(1);
-  }
+  const posts = JSON.parse(readFileSync(POSTS_JSON, 'utf8').replace(/[\uD800-\uDFFF]/g, ''));
+  const index = loadIndex();
+  const pending = [];
+  const activeKeys = new Set();
 
-  // Verify the model loaded on vLLM matches
-  try {
-    const mRes = await fetch(`${VLLM_URL}/v1/models`);
-    const mData = await mRes.json();
-    const served = mData.data?.[0]?.id;
-    if (served && served !== MODEL) {
-      console.error(`⚠ vLLM is serving "${served}" but settings say "${MODEL}"`);
-      console.error(`  Update settings or restart vLLM with the correct model.`);
-      process.exit(1);
-    }
-  } catch { /* ignore if /v1/models not available */ }
-
-  const postsRaw = readFileSync(POSTS_JSON, 'utf8').replace(/[\uD800-\uDFFF]/g, '');
-  const posts = JSON.parse(postsRaw);
-  const textEmb = loadJSON(TEXT_EMB_JSON);
-  const imgEmb = loadJSON(IMG_EMB_JSON);
-
-  // ── Step 1: Text embeddings ───────────────────────────────────────────
-  const toEmbedText = [];
-  for (const p of posts) {
-    const key = postKey(p);
-    if (textEmb[key]) continue;
-    const text = sanitizeText([p.author, p.text].filter(Boolean).join(' — '));
+  for (const post of posts) {
+    const key = postKey(post);
+    const text = postText(post);
     if (!text) continue;
-    toEmbedText.push({ key, text: text.slice(0, 2000) });
+    activeKeys.add(key);
+    const hash = fingerprint(text);
+    if (index.embeddings[key] && index.fingerprints[key] === hash) continue;
+    pending.push({ key, text, hash });
   }
 
-  console.log(`\nText: ${Object.keys(textEmb).length} done, ${toEmbedText.length} to embed`);
-
-  if (toEmbedText.length > 0) {
-    let done = 0;
-    for (let i = 0; i < toEmbedText.length; i += TEXT_BATCH) {
-      const batch = toEmbedText.slice(i, i + TEXT_BATCH);
-      try {
-        const vectors = await embedTextBatch(batch.map(b => b.text));
-        for (let j = 0; j < batch.length; j++) {
-          textEmb[batch[j].key] = vectors[j];
-        }
-        done += batch.length;
-        process.stdout.write(`\r  Text: ${done}/${toEmbedText.length}`);
-      } catch (e) {
-        console.error(`\nText batch ${i} failed: ${e.message}`);
-        break;
-      }
-      if ((i / TEXT_BATCH) % 5 === 4) saveJSON(TEXT_EMB_JSON, textEmb);
+  for (const key of Object.keys(index.embeddings)) {
+    if (!activeKeys.has(key)) {
+      delete index.embeddings[key];
+      delete index.fingerprints[key];
     }
-    saveJSON(TEXT_EMB_JSON, textEmb);
-    console.log(`\n  Saved ${Object.keys(textEmb).length} text embeddings`);
   }
 
-  // ── Step 2: Image embeddings ──────────────────────────────────────────
-  const toEmbedImg = [];
-  for (const p of posts) {
-    const key = postKey(p);
-    if (imgEmb[key]) continue;
-    const imgs = (p.mediaFiles || []).filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f.file));
-    if (imgs.length === 0) continue;
-    const filePath = join(MEDIA_DIR, imgs[0].file);
-    if (!existsSync(filePath)) continue;
-    toEmbedImg.push({ key, filePath });
-  }
+  console.log(`[embeddings] Model: ${EMBEDDING_MODEL}`);
+  console.log(`[embeddings] ${Object.keys(index.embeddings).length} current, ${pending.length} to generate`);
 
-  console.log(`\nImages: ${Object.keys(imgEmb).length} done, ${toEmbedImg.length} to embed`);
-
-  if (toEmbedImg.length > 0) {
-    let done = 0, errors = 0;
-    for (let i = 0; i < toEmbedImg.length; i += IMG_CONCURRENCY) {
-      const chunk = toEmbedImg.slice(i, i + IMG_CONCURRENCY);
-      const results = await Promise.allSettled(
-        chunk.map(async ({ key, filePath }) => {
-          const vec = await embedImage(filePath);
-          return { key, vec };
-        })
-      );
-      for (const r of results) {
-        if (r.status === 'fulfilled') {
-          imgEmb[r.value.key] = r.value.vec;
-          done++;
-        } else {
-          errors++;
-          if (errors <= 5) console.error(`\n  Error: ${r.reason?.message}`);
-        }
-      }
-      process.stdout.write(`\r  Images: ${done}/${toEmbedImg.length} (${errors} errors)`);
-      if (done % 20 < IMG_CONCURRENCY) saveJSON(IMG_EMB_JSON, imgEmb);
-      if (errors > 50) { console.error('\nToo many errors, stopping.'); break; }
+  let completed = 0;
+  for (let offset = 0; offset < pending.length; offset += TEXT_BATCH) {
+    const batch = pending.slice(offset, offset + TEXT_BATCH);
+    const vectors = await embedTextBatch(batch.map(item => item.text));
+    if (vectors.length !== batch.length) {
+      throw new Error(`Embedding API returned ${vectors.length} vectors for a batch of ${batch.length}`);
     }
-    saveJSON(IMG_EMB_JSON, imgEmb);
-    console.log(`\n  Saved ${Object.keys(imgEmb).length} image embeddings`);
+    for (let i = 0; i < batch.length; i++) {
+      index.embeddings[batch[i].key] = vectors[i];
+      index.fingerprints[batch[i].key] = batch[i].hash;
+      index.dimensions = vectors[i].length;
+    }
+    completed += batch.length;
+    process.stdout.write(`\r[embeddings] Generated ${completed}/${pending.length}`);
+    if (completed % (TEXT_BATCH * 5) === 0) saveIndex(index);
   }
 
-  console.log('\nDone!');
-  console.log(`  Text embeddings:  ${Object.keys(textEmb).length}`);
-  console.log(`  Image embeddings: ${Object.keys(imgEmb).length}`);
+  saveIndex(index);
+  if (pending.length) process.stdout.write('\n');
+  console.log(`[embeddings] Saved ${Object.keys(index.embeddings).length} text embeddings`);
 }
 
-run().catch(e => { console.error(e); process.exit(1); });
+run().catch(error => {
+  console.error(`[embeddings] Fatal: ${error.message}`);
+  process.exit(1);
+});

@@ -5,6 +5,7 @@
 
 # Scraped personal data
 output/
+.browser-profile/
 
 # Dependencies
 node_modules/

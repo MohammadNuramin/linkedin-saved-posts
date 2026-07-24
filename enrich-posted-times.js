@@ -1,7 +1,46 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { enrichPostsWithPostedAt } from './post-time.js';
+import { enrichPostsWithPostedAt, estimatePostedAt } from './post-time.js';
 
 const OUTPUT_JSON = './output/saved_posts.json';
+const SYNC_LOG = './output/sync-log.json';
+
+function backfillFromSyncHistory(posts) {
+  if (!existsSync(SYNC_LOG)) return 0;
+
+  const successfulRuns = JSON.parse(readFileSync(SYNC_LOG, 'utf8'))
+    .filter(entry => entry.status === 'success' && entry.date);
+  const history = successfulRuns.filter(entry => entry.newPosts > 0);
+  let offset = 0;
+  let updated = 0;
+
+  for (const entry of history) {
+    const batch = posts.slice(offset, offset + entry.newPosts);
+    for (const post of batch) {
+      if (post.postedAt) continue;
+      const estimated = estimatePostedAt(post.timestamp, entry.date);
+      if (!estimated) continue;
+      post.postedAt = estimated;
+      post.postedAtSource = 'relative-sync-estimate';
+      updated++;
+    }
+    offset += entry.newPosts;
+  }
+
+  // Records older than the incremental batches came from the initial scrape.
+  // Use the earliest recorded successful sync as their observation time.
+  const initialObservation = successfulRuns.at(-1)?.date;
+  if (initialObservation) {
+    for (const post of posts.slice(offset)) {
+      if (post.postedAt) continue;
+      const estimated = estimatePostedAt(post.timestamp, initialObservation);
+      if (!estimated) continue;
+      post.postedAt = estimated;
+      post.postedAtSource = 'relative-sync-estimate';
+      updated++;
+    }
+  }
+  return updated;
+}
 
 function parseArgs(argv) {
   const limitIdx = argv.indexOf('--limit');
@@ -38,9 +77,10 @@ async function run() {
     onBatchComplete: save,
   });
 
+  const estimated = backfillFromSyncHistory(posts);
   save();
   process.stdout.write('\n');
-  console.log(`[dates] Done. Updated ${result.updated} post(s).`);
+  console.log(`[dates] Done. Updated ${result.updated} exact and ${estimated} estimated timestamp(s).`);
 }
 
 run().catch(err => {

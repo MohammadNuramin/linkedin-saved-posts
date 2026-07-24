@@ -22,19 +22,24 @@ export default function App() {
   const [showStats, setShowStats] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
   const [semanticLoading, setSemanticLoading] = useState(false);
+  const [semanticError, setSemanticError] = useState<string | null>(null);
+  const [shuttingDown, setShuttingDown] = useState(false);
+  const [shutdownError, setShutdownError] = useState<string | null>(null);
   const { posts, setPosts, loading, error } = usePosts();
   const { filteredPosts, allAuthors, allHashtags } = useFilters(posts, state);
 
   const handleSemanticSearch = useCallback(async (query: string) => {
     setSemanticLoading(true);
+    setSemanticError(null);
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Search failed');
       dispatch({ type: "SET_SEMANTIC_RESULTS", payload: data.results });
-    } catch {
-      // Fall back to normal text search
+      if (data.warning) setSemanticError(data.warning);
+    } catch (error) {
       dispatch({ type: "SET_SEMANTIC_RESULTS", payload: null });
+      setSemanticError(error instanceof Error ? error.message : "AI search failed");
     } finally {
       setSemanticLoading(false);
     }
@@ -42,6 +47,20 @@ export default function App() {
 
   const handleClearSemantic = useCallback(() => {
     dispatch({ type: "SET_SEMANTIC_RESULTS", payload: null });
+    setSemanticError(null);
+  }, []);
+
+  const handleShutdown = useCallback(async () => {
+    if (!window.confirm("Shut down the viewer, sync processes, and GPU search container?")) return;
+    setShuttingDown(true);
+    setShutdownError(null);
+    try {
+      const response = await fetch("/api/shutdown", { method: "POST" });
+      if (!response.ok) throw new Error("The shutdown request was rejected");
+    } catch (error) {
+      setShuttingDown(false);
+      setShutdownError(error instanceof Error ? error.message : "Shutdown failed");
+    }
   }, []);
 
   const handleDeletePost = useCallback((index: number) => {
@@ -96,9 +115,21 @@ export default function App() {
           filteredCount={filteredPosts.length}
           onShowStats={() => setShowStats(true)}
           onShowScheduler={() => setShowScheduler(true)}
+          onShutdown={handleShutdown}
+          shuttingDown={shuttingDown}
         />
 
         <main className="container py-6 space-y-4">
+          {shuttingDown && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+              Shutting down the viewer and releasing GPU memory. You can close this tab when it disconnects.
+            </div>
+          )}
+          {shutdownError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {shutdownError}
+            </div>
+          )}
           {/* Filter bar */}
           <div className="flex flex-wrap gap-2 items-center">
             <SearchBar
@@ -108,6 +139,7 @@ export default function App() {
               onClearSemantic={handleClearSemantic}
               semanticActive={state.semanticResults !== null}
               semanticLoading={semanticLoading}
+              semanticError={semanticError}
             />
             <AuthorSelect
               value={state.author}

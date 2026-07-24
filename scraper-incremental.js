@@ -8,17 +8,17 @@
 import { chromium } from 'playwright';
 import {
   writeFileSync, readFileSync, mkdirSync, existsSync,
-  copyFileSync, readdirSync, statSync, rmSync, unlinkSync,
+  copyFileSync, readdirSync, statSync, unlinkSync,
 } from 'fs';
 import { createWriteStream } from 'fs';
 import { join, extname } from 'path';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
-import os from 'os';
 import { execSync } from 'child_process';
 import 'dotenv/config';
-import { enrichPostsWithPostedAt } from './post-time.js';
+import { enrichPostsWithPostedAt, estimatePostedAt } from './post-time.js';
+import { enrichPostMedia, needsPostMediaEnrichment, resolveFfmpegBinary } from './post-page-media.js';
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const CHROME_USER_DATA = process.env.CHROME_USER_DATA || `${process.env.LOCALAPPDATA}/Google/Chrome/User Data`;
@@ -30,7 +30,9 @@ const MEDIA_DIR   = join(OUTPUT_DIR, 'media');
 const MD_DIR      = join(OUTPUT_DIR, 'posts');
 const OUTPUT_JSON = join(OUTPUT_DIR, 'saved_posts.json');
 const SYNC_LOG    = join(OUTPUT_DIR, 'sync-log.json');
+const BROWSER_DATA_DIR = process.env.LINKEDIN_BROWSER_DATA || './.browser-profile';
 const MAX_AGE_MS  = 365 * 24 * 60 * 60 * 1000; // 1 year
+const LOGIN_WAIT_MS = Number(process.env.LINKEDIN_LOGIN_WAIT_MS || 300_000);
 
 // Scheduled task runs headless — no browser window
 const HEADLESS = process.env.HEADLESS !== 'false';
@@ -105,10 +107,14 @@ function copyLockedFile(src, dest) {
   try { execSync(`powershell -NoProfile -NonInteractive -Command "${ps}"`, { stdio: 'pipe' }); } catch { /* skip */ }
 }
 
-function copyProfile() {
+function prepareBrowserProfile() {
   const src = join(CHROME_USER_DATA, CHROME_PROFILE);
-  const tempRoot = join(os.tmpdir(), `pw-li-inc-${Date.now()}`);
+  const tempRoot = BROWSER_DATA_DIR;
   const tempProf = join(tempRoot, CHROME_PROFILE);
+
+  // Retain login state across manual and scheduled syncs.
+  if (existsSync(join(tempProf, 'Preferences'))) return tempRoot;
+
   mkdirSync(tempProf, { recursive: true });
 
   function copyDir(s, d) {
@@ -125,6 +131,9 @@ function copyProfile() {
     }
   }
   copyDir(src, tempProf);
+
+  // Root-level Chrome encryption metadata is required to read copied cookies.
+  copyLockedFile(join(CHROME_USER_DATA, 'Local State'), join(tempRoot, 'Local State'));
 
   const networkSrc = join(src, 'Network');
   if (existsSync(networkSrc)) {
@@ -147,6 +156,10 @@ function ensureDirs() {
 
 function sanitize(name) {
   return (name || 'untitled').replace(/[^\w\s\-]/g, '').replace(/\s+/g, '-').slice(0, 80) || 'untitled';
+}
+
+function postFingerprint(post) {
+  return `${post.author || ''}\n${post.text || ''}`.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 const CT_EXT = {
@@ -204,29 +217,36 @@ async function loginIfNeeded(page) {
         await gotoWithRetry(page, 'https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 30_000 });
         await delay(1000, 1500);
       }
-      await page.fill('input[name="session_key"], input#username', EMAIL);
+      await page.fill(
+        'input[name="session_key"]:visible, input#username:visible, input[autocomplete="username"]:visible, input[type="email"]:visible, input[type="text"]:visible',
+        EMAIL,
+      );
       await delay(500, 900);
-      await page.fill('input[name="session_password"], input#password', PASSWORD);
+      await page.fill(
+        'input[name="session_password"]:visible, input#password:visible, input[autocomplete="current-password"]:visible, input[type="password"]:visible',
+        PASSWORD,
+      );
       await delay(400, 800);
-      await page.click('button[type="submit"], button[data-litms-control-urn="login-submit"]');
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await page.waitForFunction(() => !location.href.includes('/login'), { timeout: 30_000 });
-      if (page.url().includes('/checkpoint')) {
-        console.error('[error] 2FA required — aborting.');
+      if (HEADLESS && /\/(checkpoint|challenge|authwall)/.test(page.url())) {
+        console.error('[error] LinkedIn verification required. Run "npm run sync:visible" once to complete it.');
         return false;
       }
       await gotoWithRetry(page, 'https://www.linkedin.com/my-items/saved-posts/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await delay(2000, 3000);
-      return true;
+      const hasPostsAfterLogin = await page.$('div[data-chameleon-result-urn], .entity-result').catch(() => null);
+      if (hasPostsAfterLogin) return true;
     } catch (e) {
-      console.error('[error] Credential login failed:', e.message);
+      console.error(`[error] Credential login failed at ${page.url()}: ${e.message}`);
     }
   }
 
   // No credentials — if running visibly, wait for manual login
   if (!HEADLESS) {
-    console.log('[sync] Not logged in. Please log in in the browser window (up to 2 min)...');
+    console.log(`[sync] Not logged in. Please log in in the browser window (up to ${Math.round(LOGIN_WAIT_MS / 60_000)} min)...`);
     try {
-      await page.waitForSelector('div[data-chameleon-result-urn]', { timeout: 120_000 });
+      await page.waitForSelector('div[data-chameleon-result-urn], .entity-result', { timeout: LOGIN_WAIT_MS });
       console.log('[sync] Logged in — continuing.');
       return true;
     } catch {
@@ -370,7 +390,11 @@ function writeMarkdown(post) {
   const title = (post.text || post.author || 'LinkedIn Post').split('\n')[0].slice(0, 80);
   const filename = `${String(post.index).padStart(3, '0')}-${sanitize(title)}.md`;
   const mediaLines = post.mediaFiles.map(m =>
-    m.type === 'image' ? `![image](../media/${m.file})` : `[video](../media/${m.file})`
+    m.type === 'image'
+      ? `![image](../media/${m.file})`
+      : m.type === 'video'
+        ? `[video](../media/${m.file})`
+        : `[document](../media/${m.file})`
   ).join('\n');
   const postedLabel = post.postedAt || 'Unknown';
   const md = `# ${title}\n\n**Author:** [${post.author || 'Unknown'}](${post.authorUrl || ''})\n**Posted:** ${postedLabel}\n**Saved View Label:** ${post.timestamp || 'Unknown'}\n**Post:** ${post.url || ''}\n\n---\n\n${post.text || '*No text content*'}\n\n${mediaLines}\n`.trimEnd() + '\n';
@@ -387,12 +411,13 @@ async function run() {
   // Load existing posts and build known-URL index
   const existingPosts = loadExistingPosts();
   const knownUrls = new Set(existingPosts.map(p => p.url).filter(Boolean));
+  const knownFingerprints = new Set(existingPosts.map(postFingerprint).filter(Boolean));
   console.log(`[sync] Existing posts: ${existingPosts.length} | Known URLs: ${knownUrls.size}`);
 
-  const tempRoot = copyProfile();
-  console.log('[sync] Profile copied. Launching browser...');
+  const browserDataDir = prepareBrowserProfile();
+  console.log(`[sync] Using persistent browser profile: ${browserDataDir}`);
 
-  const context = await chromium.launchPersistentContext(tempRoot, {
+  const context = await chromium.launchPersistentContext(browserDataDir, {
     channel: 'chrome',
     args: [`--profile-directory=${CHROME_PROFILE}`],
     headless: HEADLESS,
@@ -412,59 +437,70 @@ async function run() {
     const ok = await loginIfNeeded(page);
     if (!ok) {
       appendLog({ status: 'error', reason: 'login_required', newPosts: 0, totalPosts: existingPosts.length });
+      process.exitCode = 2;
       return;
     }
 
     await page.waitForSelector('div[data-chameleon-result-urn], .entity-result', { timeout: 30_000 }).catch(() => {});
     await delay(2000, 3500);
 
-    let noNew = 0, scrolls = 0;
-    let hitKnown = false, hitAgeLimit = false;
-    const seen = new Set(); // avoid double-counting within this run
+    let noNew = 0, scrolls = 0, processedElements = 0, consecutiveKnown = 0;
+    let enoughKnown = false, hitAgeLimit = false;
+    const seenUrls = new Set();
+    const seenFingerprints = new Set();
 
     console.log('[sync] Scrolling...');
 
-    while (scrolls < 200 && noNew < 8 && !hitKnown && !hitAgeLimit) {
+    while (scrolls < 200 && noNew < 8 && !enoughKnown && !hitAgeLimit) {
       const count = await page.evaluate(() =>
         document.querySelectorAll('div[data-chameleon-result-urn]').length
       );
 
-      const totalSeen = newPosts.length + (count - newPosts.length);
-
-      if (count > newPosts.length) {
+      if (count > processedElements) {
         const allEls = await page.$$('div[data-chameleon-result-urn]');
+        const newCountBefore = newPosts.length;
 
-        for (let i = newPosts.length; i < allEls.length; i++) {
+        for (let i = processedElements; i < allEls.length; i++) {
           const post = await extractPost(allEls[i], existingPosts.length + newPosts.length + i + 1);
+          const age = parseTimestampAge(post.timestamp);
 
           // Stop if we've hit a 1-year-old post
-          if (parseTimestampAge(post.timestamp) > MAX_AGE_MS) {
+          if (Number.isFinite(age) && age > MAX_AGE_MS) {
             console.log(`[sync] Hit age limit at post ${i + 1} ("${post.timestamp}") — stopping.`);
             hitAgeLimit = true;
             break;
           }
 
-          // Stop if we've seen this URL before (already saved)
-          if (post.url && knownUrls.has(post.url)) {
-            console.log(`[sync] Hit known post at position ${i + 1} — no more new content.`);
-            hitKnown = true;
-            break;
+          const fingerprint = postFingerprint(post);
+          const isKnown = (post.url && knownUrls.has(post.url))
+            || (fingerprint && knownFingerprints.has(fingerprint));
+          if (isKnown) {
+            consecutiveKnown++;
+            if (consecutiveKnown >= 25) {
+              console.log('[sync] Reached 25 consecutive known posts — stopping.');
+              enoughKnown = true;
+            }
+            if (enoughKnown) break;
+            continue;
           }
 
-          // Skip if we already encountered this URL in this run
-          if (post.url && seen.has(post.url)) continue;
-          if (post.url) seen.add(post.url);
+          if ((post.url && seenUrls.has(post.url))
+              || (fingerprint && seenFingerprints.has(fingerprint))) continue;
+          if (post.url) seenUrls.add(post.url);
+          if (fingerprint) seenFingerprints.add(fingerprint);
 
+          consecutiveKnown = 0;
           newPosts.push(post);
           process.stdout.write(`\r  New posts found: ${newPosts.length}`);
         }
 
-        noNew = 0;
+        processedElements = allEls.length;
+        noNew = newPosts.length === newCountBefore ? noNew + 1 : 0;
       } else {
         noNew++;
       }
 
-      if (hitKnown || hitAgeLimit) break;
+      if (enoughKnown || hitAgeLimit) break;
 
       await page.evaluate((goToBottom) => {
         if (goToBottom) { window.scrollTo(0, document.body.scrollHeight); }
@@ -494,6 +530,25 @@ async function run() {
         }
       }
 
+      const mediaTargets = newPosts.filter(needsPostMediaEnrichment);
+      if (mediaTargets.length > 0) {
+        const ffmpegBin = resolveFfmpegBinary();
+        const mediaPage = await context.newPage();
+        console.log('[sync] Resolving missing videos and PDF attachments...');
+        if (!ffmpegBin) {
+          console.log('[sync] ffmpeg not found. HLS-only videos will be skipped.');
+        }
+        for (let i = 0; i < mediaTargets.length; i++) {
+          const result = await enrichPostMedia(mediaPage, mediaTargets[i], MEDIA_DIR, { ffmpegBin });
+          const label = result.added.length > 0
+            ? result.added.map(asset => asset.type).join(', ')
+            : 'no new assets';
+          process.stdout.write(`\r  Post media: ${i + 1}/${mediaTargets.length} (${label})   `);
+        }
+        process.stdout.write('\n');
+        await mediaPage.close();
+      }
+
       console.log('[sync] Resolving original publish times...');
       await enrichPostsWithPostedAt(newPosts, {
         concurrency: 8,
@@ -502,6 +557,17 @@ async function run() {
         },
       });
       process.stdout.write('\n');
+
+      // Posts without an activity URL cannot provide an exact timestamp. Store
+      // an absolute estimate from LinkedIn's relative label and this sync time.
+      const observedAt = new Date(startTime).toISOString();
+      for (const post of newPosts) {
+        if (post.postedAt) continue;
+        const estimated = estimatePostedAt(post.timestamp, observedAt);
+        if (!estimated) continue;
+        post.postedAt = estimated;
+        post.postedAtSource = 'relative-sync-estimate';
+      }
 
       // Re-index: new posts prepended, existing posts shifted
       const merged = [...newPosts, ...existingPosts].map((p, i) => ({ ...p, index: i + 1 }));
@@ -515,7 +581,6 @@ async function run() {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[sync] Done. +${newPosts.length} new posts → total ${merged.length} (${elapsed}s)`);
       console.log('[sync] Run "npm run upgrade" to download full-res images for the new posts.');
-      console.log('[sync] Run "npm run upgrade:videos" to download videos for the new posts.');
       appendLog({ status: 'success', newPosts: newPosts.length, totalPosts: merged.length, elapsed: parseFloat(elapsed) });
     } else {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -528,7 +593,6 @@ async function run() {
     appendLog({ status: 'error', reason: e.message, newPosts: newPosts.length, totalPosts: existingPosts.length });
   } finally {
     await context.close();
-    rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 

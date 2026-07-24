@@ -47,8 +47,7 @@ export function formatPostedAt(postedAt: string | null | undefined): string | nu
 export function getDisplayTimestamp(post: PostTimeLike): string | null {
   const postedAt = formatPostedAt(post.postedAt);
   if (postedAt) return postedAt;
-  if (isRepost(post.timestamp)) return null;
-  return post.timestamp || null;
+  return null;
 }
 
 export function getPostSortTime(post: PostTimeLike): number | null {

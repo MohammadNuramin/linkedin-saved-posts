@@ -9,6 +9,7 @@ import os from 'os';
 import { execSync } from 'child_process';
 import 'dotenv/config';
 import { enrichPostsWithPostedAt } from './post-time.js';
+import { enrichPostMedia, needsPostMediaEnrichment, resolveFfmpegBinary } from './post-page-media.js';
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const CHROME_USER_DATA = process.env.CHROME_USER_DATA || `${process.env.LOCALAPPDATA}/Google/Chrome/User Data`;
@@ -167,11 +168,17 @@ async function loginIfNeeded(page) {
   }
 
   try {
-    await page.fill('input[name="session_key"], input#username', EMAIL);
+    await page.fill(
+      'input[name="session_key"]:visible, input#username:visible, input[autocomplete="username"]:visible, input[type="email"]:visible, input[type="text"]:visible',
+      EMAIL,
+    );
     await delay(500, 1200);
-    await page.fill('input[name="session_password"], input#password', PASSWORD);
+    await page.fill(
+      'input[name="session_password"]:visible, input#password:visible, input[autocomplete="current-password"]:visible, input[type="password"]:visible',
+      PASSWORD,
+    );
     await delay(400, 900);
-    await page.click('button[type="submit"], button[data-litms-control-urn="login-submit"]');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.waitForFunction(() => !location.href.includes('/login'), { timeout: 30_000 });
     if (page.url().includes('/checkpoint')) {
       console.log('[!] Verification required — please complete it in the browser (2 min).');
@@ -344,7 +351,11 @@ function writeMarkdown(post) {
   const title = (post.text || post.author || 'LinkedIn Post').split('\n')[0].slice(0, 80);
   const filename = `${String(post.index).padStart(3, '0')}-${safe(title)}.md`;
   const mediaLines = post.mediaFiles.map(m =>
-    m.type === 'image' ? `![image](../media/${m.file})` : `[video](../media/${m.file})`
+    m.type === 'image'
+      ? `![image](../media/${m.file})`
+      : m.type === 'video'
+        ? `[video](../media/${m.file})`
+        : `[document](../media/${m.file})`
   ).join('\n');
   const postedLabel = post.postedAt || 'Unknown';
 
@@ -490,6 +501,25 @@ async function run() {
         if (f) post.mediaFiles.push({ type: 'video', file: f, originalUrl: post.videos[i] });
       }
       process.stdout.write(`\r  Media: ${post.index}/${posts.length}`);
+    }
+
+    const mediaTargets = posts.filter(needsPostMediaEnrichment);
+    if (mediaTargets.length > 0) {
+      const ffmpegBin = resolveFfmpegBinary();
+      const mediaPage = await context.newPage();
+      console.log('\n[*] Resolving missing videos and PDF attachments...');
+      if (!ffmpegBin) {
+        console.log('[*] ffmpeg not found. HLS-only videos will be skipped.');
+      }
+      for (let i = 0; i < mediaTargets.length; i++) {
+        const result = await enrichPostMedia(mediaPage, mediaTargets[i], MEDIA_DIR, { ffmpegBin });
+        const label = result.added.length > 0
+          ? result.added.map(asset => asset.type).join(', ')
+          : 'no new assets';
+        process.stdout.write(`\r  Post media: ${i + 1}/${mediaTargets.length} (${label})   `);
+      }
+      process.stdout.write('\n');
+      await mediaPage.close();
     }
 
     console.log('\n[*] Resolving original publish times...');

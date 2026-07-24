@@ -1,4 +1,4 @@
-import { Moon, Sun, BarChart2, Settings } from "lucide-react";
+import { Moon, Sun, BarChart2, Settings, Power, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -10,9 +10,20 @@ interface Props {
   filteredCount: number;
   onShowStats: () => void;
   onShowScheduler: () => void;
+  onShutdown: () => void;
+  shuttingDown: boolean;
 }
 
-export function Header({ darkMode, onToggleDark, totalCount, filteredCount, onShowStats, onShowScheduler }: Props) {
+export function Header({
+  darkMode,
+  onToggleDark,
+  totalCount,
+  filteredCount,
+  onShowStats,
+  onShowScheduler,
+  onShutdown,
+  shuttingDown,
+}: Props) {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-14 items-center gap-4">
@@ -56,6 +67,24 @@ export function Header({ darkMode, onToggleDark, totalCount, filteredCount, onSh
               </Button>
             </TooltipTrigger>
             <TooltipContent>{darkMode ? "Light mode" : "Dark mode"}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={onShutdown}
+                disabled={shuttingDown}
+                aria-label="Shut down application"
+              >
+                {shuttingDown
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Power className="h-4 w-4" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Shut down and free GPU memory</TooltipContent>
           </Tooltip>
         </div>
       </div>
