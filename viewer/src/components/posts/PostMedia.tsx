@@ -31,6 +31,7 @@ function Img({ m, alt, className }: { m: MediaFile; alt: string; className?: str
 export function PostMedia({ mediaFiles, onExpand }: Props) {
   const images = mediaFiles.filter((m) => m.type === "image");
   const videos = mediaFiles.filter((m) => m.type === "video");
+  const documents = mediaFiles.filter((m) => m.type === "document");
   const [playing, setPlaying] = useState(false);
 
   const handlePlay = useCallback((e: React.MouseEvent) => {
@@ -39,21 +40,32 @@ export function PostMedia({ mediaFiles, onExpand }: Props) {
     setPlaying(true);
   }, []);
 
-  if (images.length === 0 && videos.length === 0) return null;
+  if (images.length === 0 && videos.length === 0 && documents.length === 0) return null;
 
   const isDoc = images.some((m) => isDocumentImage(m.originalUrl));
   const isVidThumb = !isDoc && images.every((m) => isVideoThumbnail(m.originalUrl));
   const hasVideoFile = videos.length > 0;
+  const hasDocumentFile = documents.length > 0;
   const [first, ...rest] = images;
 
-  // Video post with thumbnail: show thumbnail with play button, click to play
-  if (hasVideoFile && isVidThumb && images.length > 0 && !playing) {
+  if (images.length === 0 && documents.length > 0) {
     return (
       <div className="mt-3">
         <div
-          className="cursor-pointer overflow-hidden rounded-md relative"
-          onClick={handlePlay}
+          className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-4 text-sm text-muted-foreground"
+          onClick={onExpand}
         >
+          <FileText className="h-4 w-4 shrink-0" />
+          <span>PDF attachment saved locally</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (hasVideoFile && isVidThumb && images.length > 0 && !playing) {
+    return (
+      <div className="mt-3">
+        <div className="cursor-pointer overflow-hidden rounded-md relative" onClick={handlePlay}>
           <Img m={first} alt="Video thumbnail" className="w-full max-h-80 object-cover rounded-md" />
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <PlayCircle className="h-14 w-14 text-white drop-shadow-lg opacity-90" />
@@ -63,17 +75,11 @@ export function PostMedia({ mediaFiles, onExpand }: Props) {
     );
   }
 
-  // Video player (shown after clicking play, or if no thumbnail)
   if (hasVideoFile && (playing || !isVidThumb || images.length === 0)) {
     return (
       <div className="mt-3" onClick={(e) => e.stopPropagation()}>
         {videos.map((m, i) => (
-          <video
-            key={i}
-            controls
-            autoPlay={playing}
-            className="w-full rounded-md max-h-80 bg-black"
-          >
+          <video key={i} controls autoPlay={playing} className="w-full rounded-md max-h-80 bg-black">
             <source src={`/media/${m.file}`} type="video/mp4" />
           </video>
         ))}
@@ -81,7 +87,6 @@ export function PostMedia({ mediaFiles, onExpand }: Props) {
     );
   }
 
-  // Image-only posts
   return (
     <div className="mt-3 space-y-2">
       <div className="cursor-pointer overflow-hidden rounded-md relative" onClick={onExpand}>
@@ -115,7 +120,10 @@ export function PostMedia({ mediaFiles, onExpand }: Props) {
         {isDoc && (
           <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-xs text-white">
             <FileText className="h-3 w-3" />
-            Document · {images.length} page{images.length !== 1 ? "s" : ""}
+            <span>
+              Document · {images.length} page{images.length !== 1 ? "s" : ""}
+              {hasDocumentFile ? " · PDF saved" : ""}
+            </span>
           </div>
         )}
 

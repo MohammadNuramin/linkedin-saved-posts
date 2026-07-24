@@ -1,5 +1,5 @@
 export interface MediaFile {
-  type: "image" | "video";
+  type: "image" | "video" | "document";
   file: string;
   originalUrl: string;
 }
@@ -13,6 +13,7 @@ export interface Post {
   url: string | null;
   timestamp: string;
   postedAt?: string | null;
+  postedAtSource?: "relative-sync-estimate" | null;
   images: string[];
   videos: string[];
   mediaFiles: MediaFile[];

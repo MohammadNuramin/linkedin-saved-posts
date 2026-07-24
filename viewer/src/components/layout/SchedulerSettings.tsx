@@ -30,16 +30,11 @@ interface SyncStatus {
   output: string;
 }
 
-interface EmbeddingModel {
-  id: string;
-  label: string;
-  vram: string;
-}
-
 interface SettingsData {
   embeddingModel: string;
-  availableModels: EmbeddingModel[];
-  vllmUrl: string;
+  rerankerModel: string;
+  embeddingUrl: string;
+  rerankerUrl: string;
 }
 
 // ─── API helpers ────────────────────────────────────────────────────────────
@@ -119,10 +114,7 @@ export function SchedulerSettings({ open, onClose }: Props) {
   // Check if API server is reachable
   const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
 
-  // Embedding model settings
-  const [embSettings, setEmbSettings] = useState<SettingsData | null>(null);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [savingModel, setSavingModel] = useState(false);
+  const [searchSettings, setSearchSettings] = useState<SettingsData | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -135,8 +127,7 @@ export function SchedulerSettings({ open, onClose }: Props) {
       setLog(entries);
       setSelectedHour(sched.hour);
       setSelectedMinute(sched.minute);
-      setEmbSettings(settings);
-      setSelectedModel(settings.embeddingModel);
+      setSearchSettings(settings);
       setApiAvailable(true);
       setApiError(null);
     } catch (e) {
@@ -200,23 +191,6 @@ export function SchedulerSettings({ open, onClose }: Props) {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed";
       setApiError(msg.includes("409") ? "Sync already running" : msg);
-    }
-  };
-
-  const handleModelChange = async (modelId: string) => {
-    setSelectedModel(modelId);
-    setSavingModel(true);
-    setApiError(null);
-    try {
-      await apiFetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ embeddingModel: modelId }),
-      });
-    } catch (e) {
-      setApiError(e instanceof Error ? e.message : "Failed to save model");
-    } finally {
-      setSavingModel(false);
     }
   };
 
@@ -358,7 +332,7 @@ export function SchedulerSettings({ open, onClose }: Props) {
                 <span>{syncStatus.running ? "Syncing + embedding…" : "Sync now"}</span>
               </Button>
               <p className="text-xs text-muted-foreground">
-                Starts Docker vLLM, syncs new posts, generates embeddings, then stops Docker.
+                Syncs new posts, updates the text-only R3 index, then stops its temporary model service.
               </p>
               {syncStatus.running && syncStatus.output && (
                 <pre className="rounded-md bg-muted p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap max-h-32">
@@ -369,35 +343,19 @@ export function SchedulerSettings({ open, onClose }: Props) {
 
             <Separator />
 
-            {/* Embedding model */}
-            {embSettings && (
+            {/* Search pipeline */}
+            {searchSettings && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Brain className="h-4 w-4 text-purple-500" />
-                  <p className="text-sm font-medium">Embedding model</p>
-                  {savingModel && <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" />}
+                  <p className="text-sm font-medium">AI text search</p>
                 </div>
-                <Select
-                  value={selectedModel}
-                  onValueChange={handleModelChange}
-                  disabled={apiAvailable !== true || savingModel}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {embSettings.availableModels.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        <div className="flex items-center gap-2">
-                          <span>{m.label}</span>
-                          <span className="text-xs text-muted-foreground">({m.vram})</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs space-y-1">
+                  <p><span className="text-muted-foreground">Recall:</span> {searchSettings.embeddingModel}</p>
+                  <p><span className="text-muted-foreground">Reranking:</span> {searchSettings.rerankerModel}</p>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  vLLM runs locally via Docker during sync. After changing model, run <code className="font-mono">npm run embed-only</code> to regenerate embeddings.
+                  Search uses post text only. The local services start on the first AI search and stop with the viewer.
                 </p>
               </div>
             )}

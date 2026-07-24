@@ -3,6 +3,32 @@ const LINKEDIN_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 };
 
+export function parseRelativeAgeMs(value) {
+  if (!value) return null;
+  const text = value.toLowerCase().trim();
+  const units = [
+    [/(\d+)\s*(yr?|year)s?/, 365 * 24 * 60 * 60 * 1000],
+    [/(\d+)\s*(mo|month)s?/, 30 * 24 * 60 * 60 * 1000],
+    [/(\d+)\s*(w|week)s?/, 7 * 24 * 60 * 60 * 1000],
+    [/(\d+)\s*(d|day)s?/, 24 * 60 * 60 * 1000],
+    [/(\d+)\s*(h|hour)s?/, 60 * 60 * 1000],
+    [/(\d+)\s*(m|min)s?/, 60 * 1000],
+  ];
+
+  for (const [pattern, multiplier] of units) {
+    const match = text.match(pattern);
+    if (match) return Number(match[1]) * multiplier;
+  }
+  return null;
+}
+
+export function estimatePostedAt(timestamp, observedAt) {
+  const ageMs = parseRelativeAgeMs(timestamp);
+  const observedMs = Date.parse(observedAt);
+  if (ageMs === null || !Number.isFinite(observedMs)) return null;
+  return new Date(observedMs - ageMs).toISOString();
+}
+
 export function extractPostedAtFromActivityUrl(url) {
   if (!url) return null;
 

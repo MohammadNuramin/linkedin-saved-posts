@@ -25,7 +25,10 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
   const displayTime = getDisplayTimestamp(post);
   const images = post.mediaFiles.filter((m) => m.type === "image");
   const videos = post.mediaFiles.filter((m) => m.type === "video");
-  const isDoc = images.some((m) => isDocumentImage(m.originalUrl));
+  const documents = post.mediaFiles.filter((m) => m.type === "document");
+  const documentPreviewImages = images.filter((m) => isDocumentImage(m.originalUrl));
+  const regularImages = images.filter((m) => !isDocumentImage(m.originalUrl));
+  const isDoc = documentPreviewImages.length > 0;
 
   const handleCopy = () => {
     if (post.text) {
@@ -43,7 +46,7 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
 
   return (
     <Dialog open={!!post} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-3">
           <div className="flex items-start gap-3">
             <Avatar className="h-11 w-11 shrink-0">
@@ -75,9 +78,19 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
                 {displayTime && (
                   <span className="text-xs text-muted-foreground">{displayTime}</span>
                 )}
-                {images.length > 0 && (
+                {isDoc && (
                   <Badge variant="secondary" className="text-xs">
-                    {images.length} image{images.length > 1 ? "s" : ""}
+                    Document · {documentPreviewImages.length} page{documentPreviewImages.length !== 1 ? "s" : ""}
+                  </Badge>
+                )}
+                {documents.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    PDF saved
+                  </Badge>
+                )}
+                {regularImages.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    {regularImages.length} image{regularImages.length > 1 ? "s" : ""}
                   </Badge>
                 )}
               </div>
@@ -99,7 +112,9 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
                     key={i}
                     controls
                     className="w-full rounded-md bg-black"
-                    onError={(e) => { (e.currentTarget).style.display = "none"; }}
+                    onError={(e) => {
+                      (e.currentTarget).style.display = "none";
+                    }}
                   >
                     <source src={`/media/${m.file}`} />
                     <source src={m.originalUrl} />
@@ -108,21 +123,76 @@ export function PostDetailDialog({ post, onClose, onHashtagClick }: Props) {
               </div>
             )}
 
-            {isDoc && (
-              <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 px-3 py-2 text-sm text-blue-800 dark:text-blue-300">
-                <FileText className="h-4 w-4 shrink-0" />
-                <span>Document post - {images.length} page{images.length !== 1 ? "s" : ""} captured.{post.url ? " Open on LinkedIn to view the full document." : ""}</span>
+            {documents.length > 0 && (
+              <div className="space-y-3">
+                <Separator />
+                {documents.map((m, i) => (
+                  <div key={i} className="space-y-3">
+                    <div className="flex items-center justify-between gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="h-4 w-4 shrink-0" />
+                        <span className="truncate">PDF attachment saved locally</span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.open(`/media/${m.file}`, "_blank", "noopener")}
+                      >
+                        Open PDF
+                      </Button>
+                    </div>
+                    <iframe
+                      src={`/media/${m.file}#view=FitH`}
+                      title={`Document ${i + 1}`}
+                      className="h-[70vh] w-full rounded-md border bg-white"
+                    />
+                  </div>
+                ))}
               </div>
             )}
 
-            {images.length > 0 && (
+            {isDoc && documents.length === 0 && (
+              <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 px-3 py-2 text-sm text-blue-800 dark:text-blue-300">
+                <FileText className="h-4 w-4 shrink-0" />
+                <span>
+                  Document post - {documentPreviewImages.length} page{documentPreviewImages.length !== 1 ? "s" : ""} captured.
+                  {post.url ? " PDF not saved yet for this post." : ""}
+                </span>
+              </div>
+            )}
+
+            {regularImages.length > 0 && (
               <div className="space-y-2">
                 <Separator />
-                {images.map((m, i) => (
+                {regularImages.map((m, i) => (
                   <img
                     key={i}
                     src={`/media/${m.file}`}
                     alt={`Image ${i + 1}`}
+                    loading="lazy"
+                    className="w-full rounded-md object-contain max-h-[600px]"
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      if (!img.dataset.fallback) {
+                        img.dataset.fallback = "1";
+                        img.src = m.originalUrl;
+                      } else {
+                        img.style.display = "none";
+                      }
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {documentPreviewImages.length > 0 && documents.length === 0 && (
+              <div className="space-y-2">
+                <Separator />
+                {documentPreviewImages.map((m, i) => (
+                  <img
+                    key={i}
+                    src={`/media/${m.file}`}
+                    alt={`Document page ${i + 1}`}
                     loading="lazy"
                     className="w-full rounded-md object-contain max-h-[600px]"
                     onError={(e) => {
